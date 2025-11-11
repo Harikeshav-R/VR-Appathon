@@ -1,13 +1,11 @@
+using System;
 using UnityEngine;
 
-// Defines our available turning styles. We define this outside the
-// class so it can be seen in the Inspector.
 public enum TurnStyle
 {
     Smooth,
     Snap
 }
-// --- END NEW ENUM ---
 
 /// <summary>
 ///     This script manages player locomotion using a CharacterController.
@@ -16,43 +14,36 @@ public enum TurnStyle
 ///     2. Thumbstick movement (which collides with terrain)
 ///     3. Jumping
 ///     4. Smooth Turning OR Snap Turning
-///     5. Syncing the controller's horizontal position with the HMD
-///     6. Rotation lock
+///     5. Sprinting
+///     6. Syncing the controller's horizontal position with the HMD
+///     7. Rotation lock
 /// </summary>
 [RequireComponent(typeof(CharacterController))]
 public class PlayerLocomotion : MonoBehaviour
 {
-    [Header("Object References")] [Tooltip("The OVRCameraRig, which should be a child of this object.")]
-    public OVRCameraRig ovrCameraRig;
-
-    [Tooltip("The 'CenterEyeAnchor' Transform (HMD).")]
+    [Header("Object References")] public OVRCameraRig ovrCameraRig;
     public Transform centerEyeAnchor;
 
     [Header("Movement Settings")] public float moveSpeed = 3.0f;
 
+    // --- NEW VARIABLES ---
+    [Tooltip("The speed the player moves at when sprinting.")]
+    public float sprintSpeed = 6.0f;
+
+    [Tooltip("How far forward the stick must be pushed (0 to 1) to allow sprinting.")] [Range(0.1f, 1.0f)]
+    public float sprintInputThreshold = 0.8f;
+    // --- END NEW VARIABLES ---
+
     public float gravity = -9.81f;
     public float jumpForce = 5.0f;
 
-    [Header("Rotation Settings")] [Tooltip("Forces the Player object to stay vertically upright.")]
-    public bool forceUpright = true;
-
-    // --- MODIFIED & NEW VARIABLES ---
-    [Tooltip("Choose between Smooth (like a joystick) or Snap (teleporting rotation).")]
-    public TurnStyle turnStyle = TurnStyle.Snap; // Default to Snap for comfort
-
-    [Tooltip("The speed of smooth turning (if TurnStyle is Smooth).")]
+    [Header("Rotation Settings")] public bool forceUpright = true;
+    public TurnStyle turnStyle = TurnStyle.Snap;
     public float turnSpeed = 90.0f;
-
-    [Tooltip("The fixed angle for each snap turn (if TurnStyle is Snap).")]
     public float snapTurnAngle = 45.0f;
-
-    [Tooltip("The thumbstick threshold to trigger a snap turn (0 to 1).")] [Range(0.1f, 1.0f)]
-    public float snapTurnThreshold = 0.9f;
-    // --- END MODIFIED & NEW VARIABLES ---
-
+    [Range(0.1f, 1.0f)] public float snapTurnThreshold = 0.9f;
     private CharacterController _controller;
 
-    // Private variable to track our snap turn "cooldown"
     private bool _isSnapTurning;
     private float _verticalVelocity;
 
@@ -67,62 +58,59 @@ public class PlayerLocomotion : MonoBehaviour
     {
         HandleRotation();
         SyncControllerToHead();
-        var totalMovement = CalculateMovement();
+
+        // --- MODIFIED CALL ---
+        // Pass the thumbstick input to CalculateMovement
+        var thumbstickInput = OVRInput.Get(OVRInput.RawAxis2D.LThumbstick);
+        var totalMovement = CalculateMovement(thumbstickInput);
+        // --- END MODIFIED CALL ---
+
         _controller.Move(totalMovement * Time.deltaTime);
     }
 
-    /// <summary>
-    ///     Manages all player rig rotation: smooth/snap turning and upright enforcement.
-    /// </summary>
     private void HandleRotation()
     {
-        // --- MODIFIED: Now checks which turn style is active ---
-
-        // Get the right thumbstick's horizontal input
         var turnInput = OVRInput.Get(OVRInput.RawAxis2D.RThumbstick).x;
 
-        if (turnStyle == TurnStyle.Smooth)
+        switch (turnStyle)
         {
-            // --- SMOOTH TURN LOGIC (from before) ---
-            if (Mathf.Abs(turnInput) > 0.1f)
+            case TurnStyle.Smooth:
             {
-                var rotationAmount = turnInput * turnSpeed * Time.deltaTime;
-                transform.Rotate(Vector3.up, rotationAmount);
-            }
-        }
-        else if (turnStyle == TurnStyle.Snap)
-        {
-            // --- NEW SNAP TURN LOGIC ---
+                if (Mathf.Abs(turnInput) > 0.1f)
+                {
+                    var rotationAmount = turnInput * turnSpeed * Time.deltaTime;
+                    transform.Rotate(Vector3.up, rotationAmount);
+                }
 
-            // Check if we are NOT currently in the middle of a turn
-            if (!_isSnapTurning)
+                break;
+            }
+            case TurnStyle.Snap:
             {
-                // Flick right
-                if (turnInput > snapTurnThreshold)
+                if (!_isSnapTurning)
                 {
-                    transform.Rotate(Vector3.up, snapTurnAngle);
-                    _isSnapTurning = true; // Set cooldown
+                    if (turnInput > snapTurnThreshold)
+                    {
+                        transform.Rotate(Vector3.up, snapTurnAngle);
+                        _isSnapTurning = true;
+                    }
+                    else if (turnInput < -snapTurnThreshold)
+                    {
+                        transform.Rotate(Vector3.up, -snapTurnAngle);
+                        _isSnapTurning = true;
+                    }
                 }
-                // Flick left
-                else if (turnInput < -snapTurnThreshold)
-                {
-                    transform.Rotate(Vector3.up, -snapTurnAngle);
-                    _isSnapTurning = true; // Set cooldown
-                }
+
+                if (Mathf.Abs(turnInput) < 0.1f) _isSnapTurning = false;
+
+                break;
             }
-
-            // Check for stick release to reset the cooldown
-            // We use a small deadzone (e.g., 0.1)
-            if (Mathf.Abs(turnInput) < 0.1f) _isSnapTurning = false;
-            // --- END NEW SNAP TURN LOGIC ---
+            default:
+                throw new ArgumentOutOfRangeException();
         }
 
-        // --- UPRIGHT LOCK (unchanged) ---
-        if (forceUpright)
-        {
-            var angles = transform.rotation.eulerAngles;
-            if (angles.x != 0 || angles.z != 0) transform.rotation = Quaternion.Euler(0, angles.y, 0);
-        }
+        if (!forceUpright) return;
+        var angles = transform.rotation.eulerAngles;
+        if (angles.x != 0 || angles.z != 0) transform.rotation = Quaternion.Euler(0, angles.y, 0);
     }
 
     private void SyncControllerToHead()
@@ -131,7 +119,14 @@ public class PlayerLocomotion : MonoBehaviour
         _controller.center = new Vector3(headLocalPos.x, _controller.center.y, headLocalPos.z);
     }
 
-    private Vector3 CalculateMovement()
+    // --- MODIFIED FUNCTION ---
+    /// <summary>
+    ///     Calculates the final movement vector for this frame,
+    ///     including gravity, jumping, and locomotion (walk/sprint).
+    /// </summary>
+    /// <param name="thumbstickInput">The raw input from the LThumbstick.</param>
+    /// <returns>The combined movement vector.</returns>
+    private Vector3 CalculateMovement(Vector2 thumbstickInput)
     {
         var totalMovement = Vector3.zero;
 
@@ -150,12 +145,33 @@ public class PlayerLocomotion : MonoBehaviour
 
         totalMovement += Vector3.up * _verticalVelocity;
 
-        // --- Thumbstick Locomotion Logic (unchanged) ---
-        var thumbstickInput = OVRInput.Get(OVRInput.RawAxis2D.LThumbstick);
+        // --- NEW SPRINT LOGIC ---
+
+        // 1. Check for sprint button hold
+        // OVRInput.Button.PrimaryThumbstick is the left stick click
+        var isSprintButtonDown = OVRInput.Get(OVRInput.Button.PrimaryThumbstick);
+
+        // 2. Check if we are pushing the stick forward past the threshold
+        var isMovingForward = thumbstickInput.y > sprintInputThreshold;
+
+        // 3. Determine if we are sprinting
+        // We can only sprint if we are grounded, holding the button, AND
+        // pushing the stick sufficiently forward.
+        var isSprinting = _controller.isGrounded && isSprintButtonDown && isMovingForward;
+
+        // 4. Select the speed
+        var currentSpeed = isSprinting ? sprintSpeed : moveSpeed;
+
+        // --- END NEW SPRINT LOGIC ---
+
+
+        // --- Thumbstick Locomotion Logic (modified to use currentSpeed) ---
         var headForward = Vector3.ProjectOnPlane(centerEyeAnchor.forward, Vector3.up).normalized;
         var headRight = Vector3.ProjectOnPlane(centerEyeAnchor.right, Vector3.up).normalized;
         var moveDirection = headForward * thumbstickInput.y + headRight * thumbstickInput.x;
-        totalMovement += moveDirection * moveSpeed;
+
+        // Apply the correct speed (walk or sprint)
+        totalMovement += moveDirection * currentSpeed;
 
         return totalMovement;
     }
