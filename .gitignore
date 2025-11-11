@@ -218,3 +218,6 @@ InitTestScene*.unity*
 /[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
 
 # End of https://www.toptal.com/developers/gitignore/api/unity,macos,rider
+
+VR-Appathon_BurstDebugInformation_DoNotShip
+test_BackUpThisFolder_ButDontShipItWithYourGame
